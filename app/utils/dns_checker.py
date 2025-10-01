@@ -301,33 +301,24 @@ class DNSChecker:
         Returns:
             Dict con información de blacklists
         """
-        # Top 20 blacklists más importantes (seleccionadas por reputación y velocidad)
+        # Top blacklists críticas (solo las importantes para spam real, sin falsos positivos)
         blacklists = {
-            # Domain-based blacklists (top 5)
+            # Domain-based blacklists (top 3)
             "domain": [
-                "dbl.spamhaus.org",        # La más importante
-                "multi.surbl.org",          # Muy usada
-                "dbl.nordspam.com",
-                "rhsbl.sorbs.net",
-                "fresh.spameatingmonkey.net"
+                "dbl.spamhaus.org",        # Spamhaus Domain Blacklist
+                "multi.surbl.org",         # SURBL Multi (muy respetada)
+                "fresh.spameatingmonkey.net"  # SEM Fresh
             ],
-            # IP-based blacklists (top 15)
+            # IP-based blacklists (top 8 - solo spam real)
             "ip": [
-                "zen.spamhaus.org",         # La más importante (ZEN incluye SBL+XBL+PBL)
-                "bl.spamcop.net",           # SpamCop muy respetada
-                "b.barracudacentral.org",   # Barracuda
-                "dnsbl.sorbs.net",          # SORBS aggregate
-                "psbl.surriel.com",         # Passive Spam Block List
-                "bl.mailspike.net",         # MailSpike
-                "dnsbl-1.uceprotect.net",   # UCEProtect Level 1
-                "bl.spameatingmonkey.net",  # SEM
-                "spam.spamrats.com",        # SpamRats
-                "bl.blocklist.de",          # Blocklist.de
-                "dyna.spamrats.com",        # SpamRats Dynamic
-                "drone.abuse.ch",           # Abuse.ch
-                "combined.abuse.ch",        # Abuse.ch Combined
-                "pbl.spamhaus.org",         # Policy Block List
-                "bl.nordspam.com"           # Nordspam
+                "sbl.spamhaus.org",        # Spamhaus Block List (solo spam confirmado)
+                "xbl.spamhaus.org",        # Exploits Block List
+                "bl.spamcop.net",          # SpamCop
+                "b.barracudacentral.org",  # Barracuda
+                "bl.mailspike.net",        # MailSpike Blacklist
+                "bl.spameatingmonkey.net", # SEM
+                "spam.spamrats.com",       # SpamRats Spam
+                "drone.abuse.ch"           # Abuse.ch drones
             ]
         }
         
