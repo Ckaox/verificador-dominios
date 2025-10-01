@@ -169,20 +169,32 @@ async def verify_dns(domain: str):
         if dns_data['dmarc'].get('has_dmarc') and dns_data['dmarc'].get('record'):
             dmarc_details = dns_checker.parse_dmarc_detailed(dns_data['dmarc']['record'])
         
+        # Limpiar domain_age (eliminar error y has_info)
+        clean_domain_age = {k: v for k, v in domain_age.items() if k not in ['error', 'has_info']}
+        
+        # Extraer provider de MX
+        provider = dns_data['mx'].get('provider', 'Unknown')
+        
         return {
             "domain": clean_domain,
+            "success": True,
             "timestamp": datetime.utcnow().isoformat() + "Z",
+            "provider": provider,
             "dns": {
                 "mx": dns_info.mx.dict(),
                 "spf": dns_info.spf.dict(),
+                "dkim": dns_info.dkim.dict(),
                 "dmarc": dns_info.dmarc.dict(),
-                "dmarc_details": dmarc_details,
-                "dkim": dns_info.dkim.dict()
+                "dmarc_details": dmarc_details
             },
             "blacklists": dns_data['blacklists'],
-            "domain_age": domain_age,
-            "email_security_summary": email_summary.dict(),
-            "success": True
+            "domain_age": clean_domain_age,
+            "summary": {
+                "spf_configured": email_summary.spf_configured,
+                "dmarc_configured": email_summary.dmarc_configured,
+                "dkim_configured": email_summary.dkim_configured,
+                "all_configured": email_summary.all_configured
+            }
         }
         
     except ValueError as e:

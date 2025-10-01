@@ -383,20 +383,29 @@ class DNSChecker:
         # Ejecutar todas las verificaciones en paralelo
         check_results = await asyncio.gather(*tasks)
         
-        # Procesar resultados
+        # Procesar resultados en formato minimalista
+        issues = []
         for result in check_results:
             if result is not None:
-                results["blacklists_listed"] += 1
-                results["listed_in"].append(result)
-                
                 if result["type"] == "domain":
-                    results["domain_blacklisted"] = True
+                    issues.append(f"Domain listed on {result['blacklist']}")
                 elif result["type"] == "ip":
-                    results["ip_blacklisted"] = True
+                    issues.append(f"IP {result['ip']} listed on {result['blacklist']}")
         
-        results["is_blacklisted"] = results["domain_blacklisted"] or results["ip_blacklisted"]
+        # Determinar status
+        if len(issues) == 0:
+            status = "clean"
+        elif len(issues) <= 2:
+            status = "warning"
+        else:
+            status = "critical"
         
-        return results
+        return {
+            "status": status,
+            "issues": issues,
+            "ips_checked": results["mx_ips_checked"],
+            "checked": results["blacklists_checked"]
+        }
     
     def parse_dmarc_detailed(self, dmarc_record: str) -> Dict:
         """
