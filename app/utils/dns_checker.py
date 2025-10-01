@@ -287,7 +287,11 @@ class DNSChecker:
             if extra_info:
                 result.update(extra_info)
             return result
-        except:
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout):
+            # No está listado (esto es bueno)
+            return None
+        except Exception:
+            # Otro error, asumir no listado
             return None
     
     async def check_blacklists_async(self, domain: str) -> Dict:
