@@ -282,12 +282,16 @@ class DNSChecker:
                 query,
                 'A'
             )
-            # Si llega aquí Y hay respuesta, está listado
+            # Verificar que la respuesta es 127.0.0.x (indicador de blacklist)
             if result_dns:
-                result = {"blacklist": bl_name, "type": bl_type}
-                if extra_info:
-                    result.update(extra_info)
-                return result
+                for rdata in result_dns:
+                    ip_str = str(rdata)
+                    if ip_str.startswith('127.0.0.'):
+                        # Está listado
+                        result = {"blacklist": bl_name, "type": bl_type}
+                        if extra_info:
+                            result.update(extra_info)
+                        return result
             return None
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout):
             # No está listado (esto es bueno)
