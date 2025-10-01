@@ -276,17 +276,19 @@ class DNSChecker:
         """Verifica una blacklist específica de forma asíncrona"""
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
+            result_dns = await loop.run_in_executor(
                 None,
-                dns.resolver.resolve,
+                self.resolver.resolve,
                 query,
                 'A'
             )
-            # Si llega aquí, está listado
-            result = {"blacklist": bl_name, "type": bl_type}
-            if extra_info:
-                result.update(extra_info)
-            return result
+            # Si llega aquí Y hay respuesta, está listado
+            if result_dns:
+                result = {"blacklist": bl_name, "type": bl_type}
+                if extra_info:
+                    result.update(extra_info)
+                return result
+            return None
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout):
             # No está listado (esto es bueno)
             return None
