@@ -13,7 +13,6 @@ from .models import (
     BulkCheckRequest,
 )
 from .utils import DNSChecker, DomainDiscovery
-from .utils.domain_discovery import clear_dns_cache, _dns_cache
 
 
 # ---------------------------------------------------------------------------
@@ -238,29 +237,6 @@ async def verify_dns(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al verificar DNS: {str(e)}",
         )
-
-
-# ---------------------------------------------------------------------------
-# Endpoints – Caché
-# ---------------------------------------------------------------------------
-
-@app.get("/api/cache/stats", tags=["Caché"])
-async def cache_stats():
-    """Devuelve el número de entradas actualmente en caché."""
-    return {
-        "entries": len(_dns_cache),
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    }
-
-
-@app.delete("/api/cache", tags=["Caché"])
-async def cache_clear():
-    """Vacía la caché en memoria. útil para forzar re-consultas frescas."""
-    removed = clear_dns_cache()
-    return {
-        "cleared": removed,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    }
 
 
 # ---------------------------------------------------------------------------

@@ -7,39 +7,12 @@ Descubrimiento de dominios:
 """
 import asyncio
 import re
-import time
-from typing import List, Dict, Set, Optional, Tuple
+from typing import List, Dict, Set, Optional
 from urllib.parse import quote
 
 import httpx
 import dns.resolver
 import dns.exception
-
-# ---------------------------------------------------------------------------
-# Cache en memoria con TTL
-# ---------------------------------------------------------------------------
-
-_CACHE_TTL = 3600  # segundos (1 hora)
-_dns_cache: Dict[str, Tuple[float, Dict]] = {}  # key → (timestamp, result)
-
-
-def _cache_get(key: str) -> Optional[Dict]:
-    entry = _dns_cache.get(key)
-    if entry and (time.monotonic() - entry[0]) < _CACHE_TTL:
-        return entry[1]
-    return None
-
-
-def _cache_set(key: str, value: Dict) -> None:
-    _dns_cache[key] = (time.monotonic(), value)
-
-
-def clear_dns_cache() -> int:
-    """Vacía la caché en memoria. Devuelve el número de entradas eliminadas."""
-    n = len(_dns_cache)
-    _dns_cache.clear()
-    return n
-
 
 # ---------------------------------------------------------------------------
 # Patrones de variantes de marca
@@ -101,11 +74,7 @@ class DomainDiscovery:
     # Certificate Transparency – crt.sh
     # ------------------------------------------------------------------
 
-    async def search_crtsh_by_domain(self, domain: str, use_cache: bool = True) -> Dict:
-        if use_cache:
-            cached = _cache_get(f"crtsh:domain:{domain}")
-            if cached is not None:
-                return cached
+    async def search_crtsh_by_domain(self, domain: str) -> Dict:
         """
         Busca en los logs de Certificate Transparency (crt.sh) todos los
         subdominios y dominios para los que se han emitido certificados
@@ -133,7 +102,7 @@ class DomainDiscovery:
                         found.add(name.lower())
 
             subdomains = sorted(d for d in found if d != domain)
-            result = {
+            return {
                 "domain": domain,
                 "total": len(found),
                 "subdomains": subdomains,
@@ -142,8 +111,6 @@ class DomainDiscovery:
                 "success": True,
                 "error": None,
             }
-            _cache_set(f"crtsh:domain:{domain}", result)
-            return result
 
         except httpx.TimeoutException:
             return {
@@ -159,11 +126,7 @@ class DomainDiscovery:
                 "source": "crt.sh",
             }
 
-    async def search_crtsh_by_org(self, org_name: str, use_cache: bool = True) -> Dict:
-        if use_cache:
-            cached = _cache_get(f"crtsh:org:{org_name}")
-            if cached is not None:
-                return cached
+    async def search_crtsh_by_org(self, org_name: str) -> Dict:
         """
         Busca en crt.sh por nombre de organización (campo O= del certificado).
         Es la fuente más potente para descubrir TODOS los dominios que una
@@ -197,7 +160,7 @@ class DomainDiscovery:
 
             root_domains = self._extract_root_domains(found)
 
-            result = {
+            return {
                 "org": org_name,
                 "total_entries": len(found),
                 "domains": sorted(found),
@@ -207,8 +170,6 @@ class DomainDiscovery:
                 "success": True,
                 "error": None,
             }
-            _cache_set(f"crtsh:org:{org_name}", result)
-            return result
 
         except httpx.TimeoutException:
             return {
@@ -318,11 +279,6 @@ class DomainDiscovery:
         Returns:
             Dict con campos: domain, resolves, has_mx, mx_provider, likely_used
         """
-        # Comprobar caché primero
-        cached = _cache_get(domain)
-        if cached is not None:
-            return cached
-
         loop = asyncio.get_event_loop()
 
         async def _resolve_a() -> bool:
@@ -347,16 +303,13 @@ class DomainDiscovery:
         # Lanzar A y MX simultáneamente — ahorra ~1 RTT por dominio
         resolves, mx_provider = await asyncio.gather(_resolve_a(), _resolve_mx())
 
-        result: Dict = {
+        return {
             "domain": domain,
             "resolves": resolves,
             "has_mx": mx_provider is not None,
             "mx_provider": mx_provider,
             "likely_used": resolves or (mx_provider is not None),
         }
-
-        _cache_set(domain, result)
-        return result
 
     async def check_variants_bulk(self, domain: str, max_concurrent: int = 25) -> Dict:
         """
