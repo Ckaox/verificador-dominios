@@ -21,23 +21,46 @@ import dns.exception
 
 # Sufijos que se añaden DESPUÉS de la marca:  prueba + go → pruebago
 SUFFIX_VARIANTS: List[str] = [
-    # Del ejemplo del usuario (exactos)
+    # Originales del usuario
     "go", "now", "hq", "pro", "today", "online", "site", "app",
     "one", "plus", "world", "easy", "fast", "hub", "grow", "team",
     "co", "works", "shop", "club",
-    # Extendidos comunes en startups
+    # Tecnología / producto
     "labs", "ai", "io", "dev", "tech", "cloud", "base", "connect",
-    "link", "net", "solutions", "group", "global", "media", "digital",
-    "platform", "agency", "studio", "space", "zone", "desk", "suite",
+    "link", "net", "platform", "suite", "desk", "tools", "api",
+    "saas", "crm", "erp", "bot", "agent", "system", "systems",
+    # Empresa / estructura
+    "solutions", "group", "global", "media", "digital", "agency",
+    "studio", "space", "zone", "corp", "inc", "llc", "ltd",
+    "ventures", "capital", "partners", "consulting", "services",
+    # Comunidad / mercado
+    "market", "marketplace", "store", "pay", "pay",
+    "network", "community", "social", "feed", "list",
+    # Geografía / idioma
+    "us", "eu", "uk", "es", "mx", "latam", "brasil",
+    # Producto SaaS moderno
+    "flow", "stack", "core", "edge", "sync", "cast", "track",
+    "dash", "board", "kit", "box", "vault", "forge", "pulse",
+    "stream", "wise", "smart", "open", "free", "lite", "plus",
 ]
 
 # Prefijos que se añaden ANTES de la marca:  get + prueba → getprueba
+# NOTA: cada prefijo también se usa como sufijo (marca+prefijo)
 PREFIX_VARIANTS: List[str] = [
-    # Del ejemplo del usuario (exactos)
+    # Originales del usuario
     "get", "try", "use", "go", "join", "the", "now", "my",
     "start", "with",
-    # Extendidos comunes
-    "meet", "hey", "we", "on", "hi", "hello", "your", "open",
+    # Acción / llamada
+    "meet", "run", "do", "find", "build", "make", "send",
+    "pay", "book", "ask", "see", "know",
+    # Posesivo / identidad
+    "hey", "we", "our", "your", "its", "this", "that",
+    "hi", "hello", "dear",
+    # Modificador
+    "on", "in", "by", "up", "new", "all", "one", "top",
+    "pro", "just", "only", "best", "real", "true", "live",
+    # B2B / empresa
+    "team", "work", "bizz", "biz",
 ]
 
 # TLDs alternativos para el mismo nombre de marca
