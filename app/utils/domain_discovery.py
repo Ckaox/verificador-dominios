@@ -241,11 +241,14 @@ class DomainDiscovery:
             if original_tld != "com":
                 variants.add(f"{brand}{suffix}.com")
 
-        # 3) Variantes de prefijo (prefijo + marca + TLD original y .com)
+        # 3) Variantes de prefijo — ambas direcciones:
+        #    prefijo+marca (getprueba.com) Y marca+prefijo (pruebaget.com)
         for prefix in PREFIX_VARIANTS:
             variants.add(f"{prefix}{brand}.{original_tld}")
+            variants.add(f"{brand}{prefix}.{original_tld}")
             if original_tld != "com":
                 variants.add(f"{prefix}{brand}.com")
+                variants.add(f"{brand}{prefix}.com")
 
         # Eliminar el dominio original si se coló
         variants.discard(domain)
