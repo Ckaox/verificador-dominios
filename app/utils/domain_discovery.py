@@ -27,21 +27,13 @@ SUFFIX_VARIANTS: List[str] = [
     "co", "works", "shop", "club",
     # Tecnología / producto
     "labs", "ai", "io", "dev", "tech", "cloud", "base", "connect",
-    "link", "net", "platform", "suite", "desk", "tools", "api",
-    "saas", "crm", "erp", "bot", "agent", "system", "systems",
+    "link", "net", "platform", "suite", "tools", "api",
+    "flow", "stack", "core", "edge", "sync", "dash", "kit", "box", "pulse",
     # Empresa / estructura
     "solutions", "group", "global", "media", "digital", "agency",
-    "studio", "space", "zone", "corp", "inc", "llc", "ltd",
-    "ventures", "capital", "partners", "consulting", "services",
-    # Comunidad / mercado
-    "market", "marketplace", "store", "pay", "pay",
-    "network", "community", "social", "feed", "list",
-    # Geografía / idioma
-    "us", "eu", "uk", "es", "mx", "latam", "brasil",
-    # Producto SaaS moderno
-    "flow", "stack", "core", "edge", "sync", "cast", "track",
-    "dash", "board", "kit", "box", "vault", "forge", "pulse",
-    "stream", "wise", "smart", "open", "free", "lite", "plus",
+    "studio", "space", "zone", "corp", "store", "pay",
+    # Brand moderno
+    "wise", "open", "free", "lite", "desk", "smart",
 ]
 
 # Prefijos que se añaden ANTES de la marca:  get + prueba → getprueba
@@ -50,17 +42,16 @@ PREFIX_VARIANTS: List[str] = [
     # Originales del usuario
     "get", "try", "use", "go", "join", "the", "now", "my",
     "start", "with",
-    # Acción / llamada
-    "meet", "run", "do", "find", "build", "make", "send",
-    "pay", "book", "ask", "see", "know",
-    # Posesivo / identidad
-    "hey", "we", "our", "your", "its", "this", "that",
-    "hi", "hello", "dear",
+    # Acción
+    "meet", "run", "find", "build", "make",
+    # Identidad / posesivo
+    "your", "hey",
     # Modificador
-    "on", "in", "by", "up", "new", "all", "one", "top",
-    "pro", "just", "only", "best", "real", "true", "live",
-    # B2B / empresa
-    "team", "work", "bizz", "biz",
+    "on", "new", "all", "top", "pro", "best", "real", "live",
+    # B2B
+    "team", "work",
+    # Adicionales comunes
+    "open", "just", "only", "true", "hi", "see", "know", "ask", "send",
 ]
 
 # TLDs alternativos para el mismo nombre de marca
@@ -85,7 +76,7 @@ class DomainDiscovery:
     """Clase para descubrimiento de dominios relacionados con una empresa"""
 
     CRTSH_TIMEOUT = 30    # segundos para peticiones HTTP a crt.sh
-    DNS_TIMEOUT = 3       # reducido de 5 → 3 (con DNS rápidos es suficiente)
+    DNS_TIMEOUT = 1.5     # 1.5s suficiente con DNS rápidos; NXDOMAIN responde casi instantáneo
 
     def __init__(self):
         self.resolver = dns.resolver.Resolver(configure=False)
