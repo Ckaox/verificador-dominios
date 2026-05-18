@@ -379,7 +379,7 @@ class DomainDiscovery:
         for scheme in ("https", "http"):
             try:
                 async with httpx.AsyncClient(
-                    timeout=5, follow_redirects=False, verify=False
+                    timeout=2, follow_redirects=False, verify=False
                 ) as client:
                     resp = await client.get(f"{scheme}://{domain}/")
                     if resp.status_code in (301, 302, 303, 307, 308):
@@ -417,13 +417,15 @@ class DomainDiscovery:
             "cold_email_ready": cold_email_ready,
         }
 
-    async def check_variants_bulk(self, domain: str, max_concurrent: int = 25) -> Dict:
+    async def check_variants_bulk(self, domain: str, max_concurrent: int = 25, enrich: bool = True) -> Dict:
         """
         Genera variantes del dominio y verifica cuáles están activas en paralelo.
 
         Args:
             domain:         Dominio base, ej: "prueba.com"
             max_concurrent: Concurrencia máxima de consultas DNS simultáneas
+            enrich:         Si True, añade DMARC/DKIM/redirect a los activos (~3-5s extra).
+                            Si False, devuelve solo DNS básico — más rápido para volúmenes altos.
 
         Returns:
             Dict con resultados agrupados: activos, con MX, y todos.
@@ -434,8 +436,10 @@ class DomainDiscovery:
         active_raw = [r for r in results if r["likely_used"]]
         with_mx = [r for r in results if r["has_mx"]]
 
-        # Enriquecer dominios activos con DMARC, DKIM y redirección (en paralelo)
-        active = list(await asyncio.gather(*[self._enrich_domain(r) for r in active_raw])) if active_raw else []
+        if enrich and active_raw:
+            active = list(await asyncio.gather(*[self._enrich_domain(r) for r in active_raw]))
+        else:
+            active = active_raw
 
         return {
             "base_domain": domain,
@@ -447,13 +451,14 @@ class DomainDiscovery:
             "success": True,
         }
 
-    async def check_domains_bulk(self, domains: List[str], max_concurrent: int = 25) -> Dict:
+    async def check_domains_bulk(self, domains: List[str], max_concurrent: int = 25, enrich: bool = True) -> Dict:
         """
         Verifica una lista personalizada de dominios en paralelo.
 
         Args:
             domains:        Lista de dominios a verificar
             max_concurrent: Concurrencia máxima de consultas DNS simultáneas
+            enrich:         Si True, añade DMARC/DKIM/redirect a los activos.
 
         Returns:
             Dict con resultados agrupados.
@@ -463,7 +468,10 @@ class DomainDiscovery:
         active_raw = [r for r in results if r["likely_used"]]
         with_mx = [r for r in results if r["has_mx"]]
 
-        active = list(await asyncio.gather(*[self._enrich_domain(r) for r in active_raw])) if active_raw else []
+        if enrich and active_raw:
+            active = list(await asyncio.gather(*[self._enrich_domain(r) for r in active_raw]))
+        else:
+            active = active_raw
 
         return {
             "total_checked": len(domains),

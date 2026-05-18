@@ -300,23 +300,25 @@ async def discover_crtsh_by_org(org_name: str):
 async def discover_variants(
     domain: str,
     max_concurrent: int = Query(default=25, ge=1, le=50, description="Consultas DNS simultáneas"),
+    enrich: bool = Query(
+        default=False,
+        description="Enriquecer dominios activos con DMARC, DKIM y redirección HTTP. "
+                    "Añade ~3-5 s. Desactivado por defecto para volumen alto (Clay, etc)."
+    ),
 ):
     """
     Genera todas las variantes de marca (sufijos/prefijos) y TLD para un
     dominio y verifica en paralelo cuáles están activas (resuelven DNS o
     tienen registros MX configurados).
 
-    **Variantes generadas:**
-    - **TLD**: `prueba.es`, `prueba.io`, `prueba.ai`, ...
-    - **Sufijo**: `pruebago.com`, `pruebanow.com`, `pruebahq.com`, `pruebapro.com`, ...
-    - **Prefijo**: `getprueba.com`, `tryprueba.com`, `useprueba.com`, `joinprueba.com`, ...
+    **Parámetros:**
+    - `enrich=false` *(defecto)* — solo DNS+MX, ~5-8 s. Ideal para 30k filas en Clay.
+    - `enrich=true` — añade DMARC/DKIM/redirect en dominios activos, ~8-13 s.
 
     **Campos de respuesta clave:**
-    - `active_domains`: dominios que resuelven o tienen MX (los más relevantes)
-    - `with_mx_count`: cuántos tienen correo configurado (candidatos para cold email)
+    - `active_domains`: dominios que resuelven o tienen MX
+    - `with_mx_count`: cuántos tienen correo configurado
     - `all_results`: resultado completo de todos los dominios verificados
-
-    - **domain**: Dominio base, ej: `prueba.com`
     """
     try:
         clean_domain = validate_domain(domain)
@@ -324,7 +326,7 @@ async def discover_variants(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     discovery = DomainDiscovery()
-    result = await discovery.check_variants_bulk(clean_domain, max_concurrent=max_concurrent)
+    result = await discovery.check_variants_bulk(clean_domain, max_concurrent=max_concurrent, enrich=enrich)
     result["timestamp"] = datetime.utcnow().isoformat() + "Z"
     return result
 
@@ -362,6 +364,10 @@ async def list_variants(domain: str):
 async def bulk_check(
     request: BulkCheckRequest,
     max_concurrent: int = Query(default=25, ge=1, le=50, description="Consultas DNS simultáneas"),
+    enrich: bool = Query(
+        default=False,
+        description="Enriquecer dominios activos con DMARC, DKIM y redirección HTTP. Desactivado por defecto."
+    ),
 ):
     """
     Verifica en paralelo una lista personalizada de dominios.
@@ -386,7 +392,7 @@ async def bulk_check(
     ```
     """
     discovery = DomainDiscovery()
-    result = await discovery.check_domains_bulk(request.domains, max_concurrent=max_concurrent)
+    result = await discovery.check_domains_bulk(request.domains, max_concurrent=max_concurrent, enrich=enrich)
     result["timestamp"] = datetime.utcnow().isoformat() + "Z"
     return result
 
