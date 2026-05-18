@@ -371,21 +371,29 @@ class DomainDiscovery:
         return {"has_dkim": bool(found), "dkim_selector": found[0] if found else None}
 
     async def _check_redirect(self, domain: str) -> Dict:
-        """Comprueba si el dominio redirige a otra URL y a qué dominio."""
+        """
+        Comprueba si el dominio redirige a otro dominio.
+        No sigue los redirects — lee el Location header directamente del primer 3xx.
+        Usa verify=False para evitar fallos por cert mismatch en dominios secundarios.
+        """
         for scheme in ("https", "http"):
             try:
                 async with httpx.AsyncClient(
-                    timeout=5, follow_redirects=True, max_redirects=5
+                    timeout=5, follow_redirects=False, verify=False
                 ) as client:
                     resp = await client.get(f"{scheme}://{domain}/")
-                    final_url = str(resp.url)
-                    m = re.search(r'https?://(?:www\.)?([^/?#]+)', final_url)
-                    final_domain = m.group(1).lower() if m else None
-                    redirects = bool(final_domain and final_domain != domain.lower())
-                    return {
-                        "redirects": redirects,
-                        "redirect_to": final_domain if redirects else None,
-                    }
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("location", "")
+                        m = re.search(r'https?://(?:www\.)?([^/?#]+)', location)
+                        if m:
+                            final_domain = m.group(1).lower()
+                            redirects = final_domain != domain.lower()
+                            return {
+                                "redirects": redirects,
+                                "redirect_to": final_domain if redirects else None,
+                            }
+                    # Responde 200 directamente, sin redirect
+                    return {"redirects": False, "redirect_to": None}
             except Exception:
                 continue
         return {"redirects": False, "redirect_to": None}
