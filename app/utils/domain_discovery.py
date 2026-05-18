@@ -328,6 +328,87 @@ class DomainDiscovery:
             "likely_used": resolves or (mx_provider is not None),
         }
 
+    # ------------------------------------------------------------------
+    # Enriquecimiento de dominios activos: DMARC, DKIM y redirección HTTP
+    # ------------------------------------------------------------------
+
+    async def _check_dmarc_quick(self, domain: str) -> Dict:
+        """Verifica si existe registro DMARC y extrae la política (none/quarantine/reject)."""
+        loop = asyncio.get_event_loop()
+        try:
+            records = await loop.run_in_executor(
+                None, self.resolver.resolve, f"_dmarc.{domain}", "TXT"
+            )
+            for rdata in records:
+                txt = str(rdata).strip('"')
+                if txt.startswith("v=DMARC1"):
+                    m = re.search(r'p=(\w+)', txt)
+                    policy = m.group(1).lower() if m else "none"
+                    return {"has_dmarc": True, "dmarc_policy": policy}
+        except Exception:
+            pass
+        return {"has_dmarc": False, "dmarc_policy": None}
+
+    async def _check_dkim_quick(self, domain: str) -> Dict:
+        """Verifica selectores DKIM comunes en paralelo. Devuelve el primero que encuentre."""
+        QUICK_SELECTORS = ["google", "selector1", "selector2", "default", "k1", "mail", "dkim"]
+        loop = asyncio.get_event_loop()
+
+        async def _try_selector(sel: str) -> Optional[str]:
+            try:
+                records = await loop.run_in_executor(
+                    None, self.resolver.resolve, f"{sel}._domainkey.{domain}", "TXT"
+                )
+                for rdata in records:
+                    txt = str(rdata).strip('"')
+                    if "p=" in txt or "v=DKIM1" in txt:
+                        return sel
+            except Exception:
+                pass
+            return None
+
+        found = [s for s in await asyncio.gather(*[_try_selector(s) for s in QUICK_SELECTORS]) if s]
+        return {"has_dkim": bool(found), "dkim_selector": found[0] if found else None}
+
+    async def _check_redirect(self, domain: str) -> Dict:
+        """Comprueba si el dominio redirige a otra URL y a qué dominio."""
+        for scheme in ("https", "http"):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=5, follow_redirects=True, max_redirects=5
+                ) as client:
+                    resp = await client.get(f"{scheme}://{domain}/")
+                    final_url = str(resp.url)
+                    m = re.search(r'https?://(?:www\.)?([^/?#]+)', final_url)
+                    final_domain = m.group(1).lower() if m else None
+                    redirects = bool(final_domain and final_domain != domain.lower())
+                    return {
+                        "redirects": redirects,
+                        "redirect_to": final_domain if redirects else None,
+                    }
+            except Exception:
+                continue
+        return {"redirects": False, "redirect_to": None}
+
+    async def _enrich_domain(self, result: Dict) -> Dict:
+        """Para un dominio activo: añade DMARC, DKIM rápido y redirección HTTP en paralelo."""
+        async def _no_redirect() -> Dict:
+            return {"redirects": False, "redirect_to": None}
+
+        dmarc, dkim, redirect = await asyncio.gather(
+            self._check_dmarc_quick(result["domain"]),
+            self._check_dkim_quick(result["domain"]),
+            self._check_redirect(result["domain"]) if result["resolves"] else _no_redirect(),
+        )
+        cold_email_ready = result["has_mx"] and (dmarc["has_dmarc"] or dkim["has_dkim"])
+        return {
+            **result,
+            **dmarc,
+            **dkim,
+            **redirect,
+            "cold_email_ready": cold_email_ready,
+        }
+
     async def check_variants_bulk(self, domain: str, max_concurrent: int = 25) -> Dict:
         """
         Genera variantes del dominio y verifica cuáles están activas en paralelo.
@@ -342,8 +423,11 @@ class DomainDiscovery:
         variants = self.generate_variants(domain)
         results = await self._check_bulk_with_semaphore(variants, max_concurrent)
 
-        active = [r for r in results if r["likely_used"]]
+        active_raw = [r for r in results if r["likely_used"]]
         with_mx = [r for r in results if r["has_mx"]]
+
+        # Enriquecer dominios activos con DMARC, DKIM y redirección (en paralelo)
+        active = list(await asyncio.gather(*[self._enrich_domain(r) for r in active_raw])) if active_raw else []
 
         return {
             "base_domain": domain,
@@ -368,8 +452,10 @@ class DomainDiscovery:
         """
         results = await self._check_bulk_with_semaphore(domains, max_concurrent)
 
-        active = [r for r in results if r["likely_used"]]
+        active_raw = [r for r in results if r["likely_used"]]
         with_mx = [r for r in results if r["has_mx"]]
+
+        active = list(await asyncio.gather(*[self._enrich_domain(r) for r in active_raw])) if active_raw else []
 
         return {
             "total_checked": len(domains),
