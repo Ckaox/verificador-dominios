@@ -1,18 +1,24 @@
 """API para verificación de registros DNS de dominios y descubrimiento de dominios corporativos"""
-from fastapi import FastAPI, HTTPException, status, Query
+from fastapi import FastAPI, HTTPException, status, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from datetime import datetime
+from pathlib import Path
+import csv as csvlib
+import io
+import json
 import re
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from typing import List
+from typing import List, Optional, Dict
 
 from .models import (
     DNSInfo, EmailSecuritySummary, MXRecord, SPFRecord, DMARCRecord, DKIMRecord,
     BulkCheckRequest,
 )
-from .utils import DNSChecker, DomainDiscovery
+from .utils import DNSChecker, DomainDiscovery, Job
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +401,235 @@ async def bulk_check(
     result = await discovery.check_domains_bulk(request.domains, max_concurrent=max_concurrent, enrich=enrich)
     result["timestamp"] = datetime.utcnow().isoformat() + "Z"
     return result
+
+
+# ---------------------------------------------------------------------------
+# Procesador local de CSVs (Reachflow UI)
+# ---------------------------------------------------------------------------
+
+# Registro en memoria de jobs activos (uno por proceso)
+_jobs: Dict[str, Job] = {}
+
+
+def _get_job(job_id: str) -> Job:
+    if job_id in _jobs:
+        return _jobs[job_id]
+    try:
+        job = Job.load(job_id)
+        _jobs[job_id] = job
+        return job
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' no encontrado")
+
+
+@app.get("/api/jobs", tags=["CSV Jobs"])
+async def list_jobs():
+    """Lista todos los jobs guardados (para retomar después de reiniciar)."""
+    return {"jobs": Job.list_all()}
+
+
+@app.post("/api/jobs/upload", tags=["CSV Jobs"])
+async def upload_csv(file: UploadFile = File(...)):
+    """
+    Sube un CSV y devuelve las columnas detectadas + una preview.
+    Aún no crea un job — eso lo hace `/api/jobs/create`.
+    """
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = content.decode("latin-1")
+
+    reader = csvlib.DictReader(io.StringIO(text))
+    columns = reader.fieldnames or []
+    preview = []
+    total = 0
+    for i, row in enumerate(reader):
+        if i < 5:
+            preview.append(row)
+        total += 1
+
+    if not columns:
+        raise HTTPException(status_code=400, detail="No se detectaron columnas en el CSV")
+
+    # Guardar temporalmente en data/tmp para crear el job después
+    tmp_dir = Path("./data/tmp")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    import uuid as _uuid
+    tmp_id = _uuid.uuid4().hex[:12]
+    tmp_path = tmp_dir / f"{tmp_id}.csv"
+    tmp_path.write_text(text, encoding="utf-8", newline="")
+
+    return {
+        "upload_id": tmp_id,
+        "filename": file.filename,
+        "columns": columns,
+        "total_rows": total,
+        "preview": preview,
+    }
+
+
+@app.post("/api/jobs/create", tags=["CSV Jobs"])
+async def create_job(
+    upload_id: str = Form(...),
+    filename: str = Form(...),
+    domain_column: str = Form(...),
+    discover_variants: bool = Form(True),
+    variants_mode: str = Form("cascade"),  # cascade | full | cold | none
+    per_row_timeout: int = Form(180),
+    max_concurrent: int = Form(25),
+    parallel_workers: int = Form(5),
+    do_whois: bool = Form(False),
+    autostart: bool = Form(True),
+):
+    """Crea un job a partir de un CSV subido previamente."""
+    tmp_path = Path("./data/tmp") / f"{upload_id}.csv"
+    if not tmp_path.exists():
+        raise HTTPException(status_code=404, detail="Upload expirado, vuelve a subir el CSV")
+    content = tmp_path.read_bytes()
+    try:
+        job = Job.create(
+            content, filename, domain_column,
+            options={
+                "discover_variants": discover_variants,
+                "variants_mode": variants_mode,
+                "per_row_timeout": per_row_timeout,
+                "max_concurrent": max_concurrent,
+                "parallel_workers": parallel_workers,
+                "do_whois": do_whois,
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _jobs[job.state.id] = job
+    try:
+        tmp_path.unlink()
+    except Exception:
+        pass
+    if autostart:
+        job.start()
+    return {"job_id": job.state.id, "snapshot": job.snapshot()}
+
+
+@app.get("/api/jobs/{job_id}", tags=["CSV Jobs"])
+async def get_job(job_id: str):
+    job = _get_job(job_id)
+    return job.snapshot()
+
+
+@app.post("/api/jobs/{job_id}/start", tags=["CSV Jobs"])
+async def start_job(job_id: str):
+    job = _get_job(job_id)
+    if job.state.status in ("running",):
+        return {"ok": True, "status": job.state.status}
+    if job.state.status == "completed":
+        raise HTTPException(status_code=400, detail="Job ya completado")
+    job.start()
+    return {"ok": True, "status": job.state.status}
+
+
+@app.post("/api/jobs/{job_id}/pause", tags=["CSV Jobs"])
+async def pause_job(job_id: str):
+    job = _get_job(job_id)
+    job.pause()
+    return {"ok": True, "status": job.state.status}
+
+
+@app.post("/api/jobs/{job_id}/resume", tags=["CSV Jobs"])
+async def resume_job(job_id: str):
+    job = _get_job(job_id)
+    if not job.is_running():
+        # Reanudar tras reinicio: arrancar de nuevo el loop
+        job.start()
+    else:
+        job.resume()
+    return {"ok": True, "status": job.state.status}
+
+
+@app.post("/api/jobs/{job_id}/skip", tags=["CSV Jobs"])
+async def skip_current(job_id: str, worker_id: Optional[int] = None):
+    """Cancela el dominio actual de un worker (o de todos si no se especifica)."""
+    job = _get_job(job_id)
+    job.skip(worker_id=worker_id)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/stop", tags=["CSV Jobs"])
+async def stop_job(job_id: str):
+    job = _get_job(job_id)
+    job.stop()
+    return {"ok": True, "status": job.state.status}
+
+
+@app.delete("/api/jobs/{job_id}", tags=["CSV Jobs"])
+async def delete_job(job_id: str):
+    job = _get_job(job_id)
+    if job.is_running():
+        job.stop()
+        await asyncio.sleep(0.2)
+    import shutil
+    shutil.rmtree(job.dir, ignore_errors=True)
+    _jobs.pop(job_id, None)
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{job_id}/download", tags=["CSV Jobs"])
+async def download_job_csv(job_id: str):
+    job = _get_job(job_id)
+    if not job.output_csv.exists():
+        raise HTTPException(status_code=404, detail="Aún no hay resultados procesados")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", job.state.input_name or "result.csv")
+    if not safe_name.lower().endswith(".csv"):
+        safe_name += ".csv"
+    sorted_path = job.get_sorted_output_path()
+    return FileResponse(
+        sorted_path, media_type="text/csv",
+        filename=f"reachflow_{safe_name}",
+    )
+
+
+@app.get("/api/jobs/{job_id}/events", tags=["CSV Jobs"])
+async def job_events(job_id: str):
+    """Server-Sent Events stream con progreso en vivo del job."""
+    job = _get_job(job_id)
+
+    async def event_gen():
+        q = await job.subscribe()
+        try:
+            # Mensaje inicial
+            yield f"event: hello\ndata: {json.dumps({'job_id': job_id})}\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=20)
+                    payload = json.dumps(msg["data"], default=str)
+                    yield f"event: {msg['type']}\ndata: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    # keep-alive
+                    yield ": keepalive\n\n"
+        finally:
+            job.unsubscribe(q)
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Static UI
+# ---------------------------------------------------------------------------
+
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/ui", StaticFiles(directory=str(_STATIC_DIR), html=True), name="ui")
+
+
+@app.get("/app", include_in_schema=False)
+async def app_redirect():
+    return RedirectResponse(url="/ui/")
 
 
 # ---------------------------------------------------------------------------

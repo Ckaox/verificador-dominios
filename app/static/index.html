@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reachflow · Verificador de Dominios</title>
+  <link rel="icon" href="logo.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="logo.svg" alt="Reachflow" class="brand-logo" />
+      <div class="brand-text">
+        <div class="brand-name">Reachflow</div>
+        <div class="brand-sub">Verificador de dominios</div>
+      </div>
+    </div>
+
+    <button id="newJobBtn" class="primary-btn">+ Nuevo procesamiento</button>
+
+    <div class="section-title">Trabajos guardados</div>
+    <div id="jobsList" class="jobs-list">
+      <div class="empty">Cargando…</div>
+    </div>
+
+    <div class="footer-info">
+      <div>API:</div>
+      <div><a href="/docs" target="_blank">/docs</a> · <a href="/" target="_blank">/</a></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- Pantalla 1: upload + setup -->
+    <section id="setupView" class="view active">
+      <h1 class="page-title">Procesar CSV de dominios</h1>
+      <p class="page-sub">
+        Subí un CSV, elegí la columna con el dominio y el sistema verifica DNS
+        (SPF / DKIM / DMARC / MX) y detecta dominios secundarios de cold email
+        que redirigen al dominio principal.
+      </p>
+
+      <div id="dropZone" class="dropzone">
+        <input type="file" id="fileInput" accept=".csv" hidden />
+        <div class="dropzone-inner">
+          <div class="dz-icon">⬆</div>
+          <div class="dz-title">Arrastrá tu CSV acá</div>
+          <div class="dz-sub">o hacé clic para elegirlo</div>
+        </div>
+      </div>
+
+      <div id="setupForm" class="card hidden">
+        <div class="card-row">
+          <div class="field">
+            <label>Archivo</label>
+            <div id="fileName" class="readonly">—</div>
+          </div>
+          <div class="field">
+            <label>Filas detectadas</label>
+            <div id="rowCount" class="readonly">0</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="domainCol">Columna del dominio</label>
+          <select id="domainCol"></select>
+        </div>
+
+        <div class="card-row">
+          <div class="field">
+            <label for="optTimeout">Timeout por fila (segundos)</label>
+            <input type="number" id="optTimeout" value="180" min="10" max="600" />
+          </div>
+          <div class="field">
+            <label for="optConcurrent">Concurrencia DNS interna</label>
+            <input type="number" id="optConcurrent" value="25" min="1" max="50" />
+          </div>
+          <div class="field">
+            <label for="optWorkers">Dominios en paralelo</label>
+            <input type="number" id="optWorkers" value="5" min="1" max="20" />
+            <span class="hint" id="workersHint">5 = balance estable</span>
+          </div>
+          <div class="field checkbox-field">
+            <label class="checkbox">
+              <input type="checkbox" id="optWhois" />
+              <span>Buscar WHOIS (propietario del dominio + variantes)</span>
+            </label>
+            <span class="hint">Mucho más lento (+10-30s por fila). Detecta si las variantes son de la misma entidad que el main.</span>
+          </div>
+          <div class="field">
+            <label for="optVariantsMode">Búsqueda de variantes</label>
+            <select id="optVariantsMode">
+              <option value="cascade" selected>Smart cascade (cold + expansión si hay match) ⭐</option>
+              <option value="cold">Cold email focus (~40 variantes, rápido)</option>
+              <option value="full">Completo (~150 variantes, lento)</option>
+              <option value="none">Solo DNS principal (sin variantes)</option>
+            </select>
+            <span class="hint" id="variantsHint">Empieza con 40 cold; si encuentra algo, expande a las 150</span>
+          </div>
+        </div>
+
+        <div class="preview-wrap">
+          <div class="field-label">Preview</div>
+          <div id="previewTable" class="preview-table"></div>
+        </div>
+
+        <div class="actions">
+          <button id="startBtn" class="primary-btn">▶ Iniciar procesamiento</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pantalla 2: progreso en vivo -->
+    <section id="jobView" class="view">
+      <div class="job-header">
+        <div>
+          <h1 class="page-title" id="jobTitle">—</h1>
+          <div class="page-sub" id="jobSub">—</div>
+        </div>
+        <div class="job-actions">
+          <button id="pauseBtn" class="btn">⏸ Pausar</button>
+          <button id="resumeBtn" class="btn hidden">▶ Reanudar</button>
+          <button id="stopBtn" class="btn danger">⏹ Detener</button>
+          <button id="downloadBtn" class="btn primary">⬇ Descargar CSV</button>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Progreso</div>
+          <div class="stat-value" id="statProgress">0 / 0</div>
+          <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Estado</div>
+          <div class="stat-value">
+            <span id="statStatus" class="pill">—</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">OK</div>
+          <div class="stat-value ok" id="statOk">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Errores</div>
+          <div class="stat-value err" id="statErr">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Timeouts</div>
+          <div class="stat-value warn" id="statTimeout">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">ETA</div>
+          <div class="stat-value" id="statEta">—</div>
+        </div>
+      </div>
+
+      <div class="workers-card">
+        <div class="workers-header">
+          <div class="current-label">Workers activos</div>
+          <button id="skipAllBtn" class="btn small">⏭ Saltar todos los actuales</button>
+        </div>
+        <div id="workersGrid" class="workers-grid"></div>
+      </div>
+
+      <div class="aggregates-card">
+        <div class="agg-header">
+          <h2>Resumen de hallazgos</h2>
+          <span class="agg-sub">Sobre las filas con estado "ok"</span>
+        </div>
+        <div class="agg-section">
+          <div class="agg-section-title">Email security score</div>
+          <div class="agg-grid">
+            <div class="agg-tile score-poor"><div class="agg-label">Poor</div><div class="agg-value" id="aggPoor">0</div></div>
+            <div class="agg-tile score-fair"><div class="agg-label">Fair</div><div class="agg-value" id="aggFair">0</div></div>
+            <div class="agg-tile score-good"><div class="agg-label">Good</div><div class="agg-value" id="aggGood">0</div></div>
+            <div class="agg-tile score-excellent"><div class="agg-label">Excellent</div><div class="agg-value" id="aggExcellent">0</div></div>
+          </div>
+        </div>
+        <div class="agg-section">
+          <div class="agg-section-title">Empresas con dominios extra y redirecciones</div>
+          <div class="agg-grid">
+            <div class="agg-tile">
+              <div class="agg-label">Con dominios extra</div>
+              <div class="agg-value" id="aggWithDomains">0</div>
+              <div class="agg-hint">empresas con ≥1 variante activa</div>
+            </div>
+            <div class="agg-tile">
+              <div class="agg-label">Con redirecciones</div>
+              <div class="agg-value" id="aggRedir">0</div>
+              <div class="agg-hint">empresas con ≥1 variante que redirige</div>
+            </div>
+            <div class="agg-tile highlight">
+              <div class="agg-label">Redirigen al main</div>
+              <div class="agg-value" id="aggRedirMain">0</div>
+              <div class="agg-hint">empresas con ≥1 variante que redirige al main</div>
+            </div>
+            <div class="agg-tile highlight">
+              <div class="agg-label">Cold email real</div>
+              <div class="agg-value" id="aggColdReady">0</div>
+              <div class="agg-hint">empresas con &gt;1 variante MX + DKIM + DMARC (infra dedicada)</div>
+            </div>
+            <div class="agg-tile highlight">
+              <div class="agg-label">Match WHOIS</div>
+              <div class="agg-value" id="aggWhoisMatch">0</div>
+              <div class="agg-hint">empresas con ≥1 variante de la misma entidad</div>
+            </div>
+          </div>
+        </div>
+        <div class="agg-section">
+          <div class="agg-section-title">Totales de variantes encontradas</div>
+          <div class="agg-grid">
+            <div class="agg-tile">
+              <div class="agg-label">Variantes activas</div>
+              <div class="agg-value" id="aggTotalActive">0</div>
+              <div class="agg-hint">total acumulado (todas las empresas)</div>
+            </div>
+            <div class="agg-tile">
+              <div class="agg-label">Con MX</div>
+              <div class="agg-value" id="aggTotalMX">0</div>
+              <div class="agg-hint">variantes con servidor de correo configurado</div>
+            </div>
+            <div class="agg-tile">
+              <div class="agg-label">Stack cold email completo</div>
+              <div class="agg-value" id="aggTotalReady">0</div>
+              <div class="agg-hint">variantes con MX + DKIM + DMARC</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="results-card">
+        <div class="results-header">
+          <h2>Resultados recientes</h2>
+        </div>
+        <div class="table-wrap">
+          <table class="results-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Dominio</th>
+                <th>Estado</th>
+                <th>SPF</th>
+                <th>DKIM</th>
+                <th>DMARC</th>
+                <th>MX</th>
+                <th>Score</th>
+                <th title="Variantes activas detectadas (resuelven o tienen MX)">Dominios</th>
+                <th title="Variantes con MX + DKIM + DMARC (stack cold email completo)">Cold-ready</th>
+                <th title="Variantes activas que redirigen a cualquier destino">Redirigen</th>
+                <th title="Variantes activas que redirigen al dominio principal">→ al main</th>
+                <th title="Variantes que comparten entidad WHOIS con el dominio principal">WHOIS</th>
+                <th>Tiempo</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

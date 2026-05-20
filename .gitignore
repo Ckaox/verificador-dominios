@@ -3,6 +3,7 @@ __pycache__/
 *$py.class
 *.so
 .env
+.venv/
 .venv
 env/
 venv/
@@ -14,4 +15,12 @@ dist/
 .mypy_cache/
 .idea/
 .vscode/
+.claude/
 *.log
+data/
+*.csv
+!app/static/*.csv
+
+# OS junk
+.DS_Store
+Thumbs.db

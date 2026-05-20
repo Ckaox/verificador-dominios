@@ -57,9 +57,36 @@ PREFIX_VARIANTS: List[str] = [
 # TLDs alternativos para el mismo nombre de marca
 TLD_VARIANTS: List[str] = [
     "com", "es", "net", "io", "app", "co", "org", "ai",
-    "dev", "tech", "info", "biz", "eu", "us",
+    "dev", "tech", "info", "biz", "eu", "us", "cc",
+    "online", "site", "digital", "global",
     "de", "fr", "it", "pt", "mx", "ar", "cl", "br", "lat",
 ]
+
+# ---------------------------------------------------------------------------
+# Subconjuntos optimizados para detección de "cold email infra"
+# Estos son los patrones que típicamente usan las empresas para sus dominios
+# secundarios de cold outbound, evitando los .com principales.
+# ~40 variantes vs ~214 del modo completo → 5x más rápido.
+# ---------------------------------------------------------------------------
+
+COLD_EMAIL_SUFFIXES: List[str] = [
+    # Específicos de email/outbound
+    "mail", "email", "inbox", "outreach", "reply",
+    # Genéricos cold-email comunes
+    "try", "get", "go", "app", "hq", "team",
+    "io", "co", "labs", "now",
+]
+
+COLD_EMAIL_PREFIXES: List[str] = [
+    "get", "try", "use", "go", "mail", "email",
+    "my", "hi", "the", "join", "meet", "with",
+]
+
+COLD_EMAIL_TLDS: List[str] = [
+    "com", "co", "net", "org", "es", "io", "cc", "eu", "info",
+    "online", "site", "tech", "digital", "global", "app",
+]
+
 
 # TLDs de múltiples partes para extracción correcta de dominio raíz
 _MULTI_PART_TLDS: Set[str] = {
@@ -220,6 +247,46 @@ class DomainDiscovery:
     # Generación de variantes de marca y TLD
     # ------------------------------------------------------------------
 
+    def generate_variants_mode(self, domain: str, mode: str = "full") -> List[str]:
+        """
+        Genera variantes según el modo:
+          - "full"  → todas (~214) — el set completo
+          - "cold"  → solo patrones de cold email infra (~40) — 5x más rápido
+          - "none"  → []
+        """
+        if mode == "none":
+            return []
+        if mode == "cold":
+            return self._generate_variants(domain, COLD_EMAIL_SUFFIXES,
+                                           COLD_EMAIL_PREFIXES, COLD_EMAIL_TLDS)
+        return self._generate_variants(domain, SUFFIX_VARIANTS,
+                                       PREFIX_VARIANTS, TLD_VARIANTS)
+
+    def _generate_variants(self, domain: str, suffixes: List[str],
+                           prefixes: List[str], tlds: List[str]) -> List[str]:
+        parts = domain.rsplit(".", 1)
+        if len(parts) != 2:
+            return []
+        brand = parts[0].lower()
+        original_tld = parts[1].lower()
+        variants: Set[str] = set()
+
+        for tld in tlds:
+            if tld != original_tld:
+                variants.add(f"{brand}.{tld}")
+        for suffix in suffixes:
+            variants.add(f"{brand}{suffix}.{original_tld}")
+            if original_tld != "com":
+                variants.add(f"{brand}{suffix}.com")
+        for prefix in prefixes:
+            variants.add(f"{prefix}{brand}.{original_tld}")
+            variants.add(f"{brand}{prefix}.{original_tld}")
+            if original_tld != "com":
+                variants.add(f"{prefix}{brand}.com")
+                variants.add(f"{brand}{prefix}.com")
+        variants.discard(domain)
+        return sorted(variants)
+
     def generate_variants(self, domain: str) -> List[str]:
         """
         Genera todas las variantes de marca y TLD para un dominio dado.
@@ -373,30 +440,44 @@ class DomainDiscovery:
     async def _check_redirect(self, domain: str) -> Dict:
         """
         Comprueba si el dominio redirige a otro dominio.
-        No sigue los redirects — lee el Location header directamente del primer 3xx.
-        Usa verify=False para evitar fallos por cert mismatch en dominios secundarios.
+        Sigue la cadena completa de redirects (hasta 5 saltos) y compara
+        el host final con el original. Strip-ea 'www.' antes de comparar.
         """
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
         for scheme in ("https", "http"):
             try:
                 async with httpx.AsyncClient(
-                    timeout=2, follow_redirects=False, verify=False
+                    timeout=8, follow_redirects=True, verify=False,
+                    max_redirects=5, headers=headers,
                 ) as client:
                     resp = await client.get(f"{scheme}://{domain}/")
-                    if resp.status_code in (301, 302, 303, 307, 308):
-                        location = resp.headers.get("location", "")
-                        m = re.search(r'https?://(?:www\.)?([^/?#]+)', location)
-                        if m:
-                            final_domain = m.group(1).lower()
-                            redirects = final_domain != domain.lower()
-                            return {
-                                "redirects": redirects,
-                                "redirect_to": final_domain if redirects else None,
-                            }
-                    # Responde 200 directamente, sin redirect
-                    return {"redirects": False, "redirect_to": None}
+                    final_url = str(resp.url)
+                    m = re.search(r'https?://(?:www\.)?([^/?#:]+)', final_url)
+                    if m:
+                        final_domain = m.group(1).lower()
+                        original = domain.lower()
+                        # Si el final es el mismo dominio (o subdominio del mismo),
+                        # no consideramos que redirija.
+                        same = (
+                            final_domain == original
+                            or final_domain.endswith("." + original)
+                            or original.endswith("." + final_domain)
+                        )
+                        return {
+                            "redirects": not same,
+                            "redirect_to": final_domain if not same else None,
+                            "final_url": final_url,
+                        }
+                    return {"redirects": False, "redirect_to": None, "final_url": final_url}
             except Exception:
                 continue
-        return {"redirects": False, "redirect_to": None}
+        return {"redirects": False, "redirect_to": None, "final_url": None}
 
     async def _enrich_domain(self, result: Dict) -> Dict:
         """Para un dominio activo: añade DMARC, DKIM rápido y redirección HTTP en paralelo."""
