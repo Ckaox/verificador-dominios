@@ -1,5 +1,10 @@
 # Reachflow · Verificador de Dominios
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![Status](https://img.shields.io/badge/status-active-success)
+
 Herramienta para auditar dominios:
 - Verifica **SPF / DKIM / DMARC / MX** del dominio principal
 - Descubre **dominios secundarios** (variantes de marca y TLD) que la empresa pueda estar usando para **cold email**
